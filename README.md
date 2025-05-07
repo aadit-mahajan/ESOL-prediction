@@ -1,6 +1,6 @@
 ## ESOL prediction project
 
-This project aims to train a two-track model on the MoleculeNet ESOL dataset to predict the solubilities of the molecules. 
+This project aims to train a two-track model on the MoleculeNet ESOL dataset to predict the solubilities of molecules from their SMILES data.
 
 It uses a two-track approach to tackle this problem:
 1. ChemBERTa embeddings of the SMILES string for each molecule 
