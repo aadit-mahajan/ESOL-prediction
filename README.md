@@ -15,4 +15,5 @@ The performance metrics used to assess the prediction power of the model were RM
                 
 The plots for the performance assessment are added to the plots folder. 
 
-
+Credits:     
+link to the MoleculeNet ESOL dataset used: https://huggingface.co/datasets/scikit-fingerprints/MoleculeNet_ESOL
