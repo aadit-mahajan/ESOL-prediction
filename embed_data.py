@@ -65,6 +65,5 @@ def main():
     # save the dataset as parquet
     dataset.to_parquet("aqsoldb.parquet", index=False)
 
-
 if __name__ == '__main__':
     main()
