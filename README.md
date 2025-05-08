@@ -16,4 +16,9 @@ The performance metrics used to assess the prediction power of the model were RM
 The plots for the performance assessment are added to the plots folder. 
 
 Credits:     
-link to the MoleculeNet ESOL dataset used: https://huggingface.co/datasets/scikit-fingerprints/MoleculeNet_ESOL
+MoleculeNet ESOL dataset:       
+https://huggingface.co/datasets/scikit-fingerprints/MoleculeNet_ESOL        
+
+AqSolDB: A curated aqueous solubility dataset:      
+Nature Scientific Data - https://doi.org/10.1038/s41597-019-0151-1
+link to dataset: https://www.kaggle.com/datasets/sorkun/aqsoldb-a-curated-aqueous-solubility-dataset

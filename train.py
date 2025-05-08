@@ -10,10 +10,13 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from scipy.stats import pearsonr, spearmanr
 import os 
+from rdkit import RDLogger
+
+RDLogger.DisableLog('rdApp.*')
 
 torch.manual_seed(42)
 
-def train_model(model, train_loader, optimizer, criterion, device):
+def iterate(model, train_loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
     for graph_data, cls_embed, mean_embed, labels in train_loader:
@@ -32,7 +35,7 @@ def train_model(model, train_loader, optimizer, criterion, device):
 
     return total_loss / len(train_loader)
 
-def evaluate_model(model, val_loader, criterion, device):
+def evaluate(model, val_loader, criterion, device):
     model.eval()
     total_loss = 0
     with torch.no_grad():
@@ -78,14 +81,14 @@ def evaluate_regression(y_true, y_pred):
 
     return f"RMSE: {rmse:.4f}\nMAE: {mae:.4f}\nR²: {r2:.4f}\nPearson r: {pearson_r:.4f}\nSpearman ρ: {spearman_r:.4f}"
 
-def make_plots(y_true, y_pred):
+def make_plots(y_true, y_pred, run_name):
     plt.figure(figsize=(8, 6))
     plt.scatter(y_true, y_pred)
     plt.plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 'k--', lw=2)  # Line y=x
     plt.xlabel("True Values")
     plt.ylabel("Predicted Values")
     plt.title("Predictions vs True Values")
-    plt.savefig("plots/predictions.png")
+    plt.savefig(f"results/predictions_{run_name}.png")
     plt.close()
 
     plt.figure(figsize=(8, 6))
@@ -95,26 +98,44 @@ def make_plots(y_true, y_pred):
     plt.title("Residuals vs Predicted Values")
     plt.xlabel("Predicted Values")
     plt.ylabel("Residuals")
-    plt.savefig("plots/residuals.png")
+    plt.savefig(f"results/residuals_{run_name}.png")
     plt.close()
 
 
 def main():
-    plots_path = "./plots"
-    os.makedirs(plots_path, exist_ok=True)
+    results_path = "./results"
+    model_dir = "./models"
+
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(results_path, exist_ok=True)
     dataset_path = "./esol.parquet"
-    df = pd.read_parquet(dataset_path)
+    dataset_path2 = "./aqsoldb.parquet"
+    aqsoldb = pd.read_parquet(dataset_path2)
+    esol = pd.read_parquet(dataset_path)
     print("Dataset loaded\n")
 
-    df['X_cls'] = df['X_cls'].apply(lambda x: np.array(x))
-    df['X_mean'] = df['X_mean'].apply(lambda x: np.array(x))
+    esol['X_cls'] = esol['X_cls'].apply(lambda x: np.array(x))
+    esol['X_mean'] = esol['X_mean'].apply(lambda x: np.array(x))
 
-    # Create dataset
-    dataset = ESOLDataset(df)
+    aqsoldb['X_cls'] = aqsoldb['X_cls'].apply(lambda x: np.array(x))
+    aqsoldb['X_mean'] = aqsoldb['X_mean'].apply(lambda x: np.array(x))
+       # Create dataset
+    dataset1 = ESOLDataset(esol)
+    dataset2 = ESOLDataset(aqsoldb)
+    
+    # dataset used:
+    # df = esol
+    # dataset = dataset1
+    # run_name = "esol"
+
+    df = aqsoldb
+    dataset = dataset2
+    run_name = "aqsoldb"
+
     # split the dataset
     train, test, val = random_split(
         dataset, 
-        lengths=[0.75, 0.1, 0.15],
+        lengths=[0.75, 0.15, 0.1],
         generator=torch.Generator().manual_seed(42)
     )
 
@@ -124,53 +145,65 @@ def main():
 
     in_channels_cls = df['X_cls'].iloc[0].shape[0]
     in_channels_mean = df['X_mean'].iloc[0].shape[0]
-    in_channels = dataset[0][0].x.shape[1]
+    in_channels = dataset1[0][0].x.shape[1]
     out_channels = 16
 
     print(f"Input channels: {in_channels_cls}, {in_channels_mean}, {in_channels}")
     print(f"Output channels: {out_channels}")
 
-    print("Loaders created. Starting training...\n")
-    model = twoTrackNetwork(
-        in_channels=in_channels,
-        in_channels_cls=in_channels_cls, 
-        in_channels_mean=in_channels_mean,
-        out_channels=out_channels
-    )
-    
+
+    def train_model(trainLoader, valLoader, in_channels_cls, in_channels_mean, in_channels, out_channels):
+        
+        print("Loaders created. Starting training...\n")
+        model = twoTrackNetwork(
+            in_channels=in_channels,
+            in_channels_cls=in_channels_cls, 
+            in_channels_mean=in_channels_mean,
+            out_channels=out_channels
+        )
+
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
+        criterion = torch.nn.MSELoss()
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model.to(device)
+
+        epochs = 40
+        history = []
+        for epoch in range(epochs):
+            train_loss = iterate(model, trainLoader, optimizer, criterion, device)
+            val_loss = evaluate(model, valLoader, criterion, device)
+
+            losses = {
+                'train_loss': train_loss,
+                'val_loss': val_loss
+            }
+            print(f'epoch: {epoch}\ntrain loss: {losses['train_loss']}, val loss: {losses['val_loss']}\n')
+            history.append(losses)
+
+        print("Training Complete")
+
+        losses_df = pd.DataFrame(history)
+        plt.figure(figsize=(8, 6))
+        plt.title("Losses")
+        sns.lineplot(losses_df)
+        plt.xlabel("Epochs")
+        plt.ylabel("Loss")
+        plt.legend(['Train Loss', 'Validation Loss'])
+        plt.xticks(range(0, epochs, 1))
+        plt.grid()
+        plt.savefig(f"results/losses_{run_name}.png")
+        return history, model
+
+    history, model = train_model(trainLoader, valLoader, in_channels_cls, in_channels_mean, in_channels, out_channels) 
+
+    # test the model on the test data:
+
     optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
     criterion = torch.nn.MSELoss()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device)
 
-    epochs = 20
-    history = []
-    for epoch in range(epochs):
-        train_loss = train_model(model, trainLoader, optimizer, criterion, device)
-        val_loss = evaluate_model(model, valLoader, criterion, device)
-
-        losses = {
-            'train_loss': train_loss,
-            'val_loss': val_loss
-        }
-        print(f'epoch: {epoch}\ntrain loss: {losses['train_loss']}, val loss: {losses['val_loss']}\n')
-        history.append(losses)
-
-    print("Training Complete")
-
-    losses_df = pd.DataFrame(history)
-    plt.figure(figsize=(8, 6))
-    plt.title("Losses")
-    sns.lineplot(losses_df)
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend(['Train Loss', 'Validation Loss'])
-    plt.xticks(range(0, epochs, 1))
-    plt.grid()
-    plt.savefig("plots/losses.png") 
-
-    # test the model on the test data:
-    test_loss = evaluate_model(model, testLoader, criterion, device)
+    test_loss = evaluate(model, testLoader, criterion, device)
     print(f'Test loss: {test_loss}')
     y_true = []
     y_pred = []
@@ -189,14 +222,14 @@ def main():
     y_pred = np.array(y_pred)
     print("Evaluation metrics:")
     output = evaluate_regression(y_true, y_pred)
-    with open("perf_mets.txt", 'w+') as f:
+    with open(f"results/perf_mets_{run_name}.txt", 'w+') as f:
         f.write(output)
 
-    make_plots(y_true, y_pred)
+    make_plots(y_true, y_pred, run_name)
     print("Plots saved as predictions.png and residuals.png")
 
     # Save the model
-    torch.save(model.state_dict(), "model.pth")
+    torch.save(model.state_dict(), f"models/model_{run_name}.pth")
     print("Model saved as model.pth")
 
 if __name__ == '__main__':

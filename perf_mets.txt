@@ -1,5 +1,0 @@
-RMSE: 0.7615
-MAE: 0.5697
-R²: 0.8820
-Pearson r: 0.9399
-Spearman ρ: 0.9412
