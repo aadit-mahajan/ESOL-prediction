@@ -124,13 +124,14 @@ def main():
     dataset2 = ESOLDataset(aqsoldb)
     
     # dataset used:
-    # df = esol
-    # dataset = dataset1
-    # run_name = "esol"
 
-    df = aqsoldb
-    dataset = dataset2
-    run_name = "aqsoldb"
+    df = esol
+    dataset = dataset1
+    run_name = "esol"
+
+    # df = aqsoldb
+    # dataset = dataset2
+    # run_name = "aqsoldb"
 
     # split the dataset
     train, test, val = random_split(
@@ -146,7 +147,7 @@ def main():
     in_channels_cls = df['X_cls'].iloc[0].shape[0]
     in_channels_mean = df['X_mean'].iloc[0].shape[0]
     in_channels = dataset1[0][0].x.shape[1]
-    out_channels = 16
+    out_channels = 32
 
     print(f"Input channels: {in_channels_cls}, {in_channels_mean}, {in_channels}")
     print(f"Output channels: {out_channels}")
@@ -162,7 +163,6 @@ def main():
             out_channels=out_channels
         )
 
-        
         optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
         criterion = torch.nn.MSELoss()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -230,7 +230,7 @@ def main():
 
     # Save the model
     torch.save(model.state_dict(), f"models/model_{run_name}.pth")
-    print("Model saved as model.pth")
+    print(f"Model saved as models/model_{run_name}.pth")
 
 if __name__ == '__main__':
     main()

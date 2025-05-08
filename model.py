@@ -1,14 +1,13 @@
 import torch 
 import torch.nn as nn
-import torch_geometric as tg
-from torch_geometric.nn import GATConv, MessagePassing, DeepGCNLayer, global_mean_pool
+from torch_geometric.nn import GATConv, GINConv, DeepGCNLayer, global_mean_pool, AttentionalAggregation, MFConv
 
 class GAT(nn.Module):
     # captures connectivity importances
     def __init__(self, in_channels, out_channels):
         super(GAT, self).__init__()
-        self.conv1 = GATConv(in_channels, 16)
-        self.conv2 = GATConv(16, out_channels)
+        self.conv1 = GATConv(in_channels, 32)
+        self.conv2 = GATConv(32, out_channels)
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
@@ -19,7 +18,7 @@ class GAT(nn.Module):
 class DeepGAT(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(DeepGAT, self).__init__()
-        hidden_channels = 16
+        hidden_channels = 32
 
         # First layer
         self.input_conv = GATConv(in_channels, hidden_channels)
@@ -42,24 +41,50 @@ class DeepGAT(nn.Module):
         x = self.output_conv(x, edge_index)
         return x
     
-    
-class MPNN(MessagePassing):
-    # Captures richer edge and node interactions
-    def __init__(self, in_channels, out_channels):
-        super(MPNN, self).__init__(aggr='add')  # "Add" aggregation.
-        self.lin = nn.Linear(in_channels, out_channels)
-        self.lin2 = nn.Linear(out_channels, out_channels)
+class GIN(nn.Module):
+    def __init__(self, in_channels, hidden_dim, out_dim):
+        super(GIN, self).__init__()
+
+        # Define a simple MLP used by GINConv
+        self.mlp1 = nn.Sequential(
+            nn.Linear(in_channels, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        self.conv1 = GINConv(self.mlp1)
+
+        self.mlp2 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        self.conv2 = GINConv(self.mlp2)
+
+        # Final output projection (if needed)
+        self.out_lin = nn.Linear(hidden_dim, out_dim)
 
     def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = torch.relu(x)
+        x = self.conv2(x, edge_index)
+        x = torch.relu(x)
+        x = self.out_lin(x)
+        return x
 
-        out = self.propagate(edge_index, x=x)
-        return out
+class MFNet(nn.Module):
+    # captures connectivity importances
+    def __init__(self, in_channels, out_channels):
+        super(MFNet, self).__init__()
+        self.conv1 = MFConv(in_channels, 32)
+        self.conv2 = MFConv(32, out_channels)
 
-    def message(self, x_j):
-        return self.lin(x_j)
-
-    def update(self, aggr_out):
-        return self.lin2(aggr_out)
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = torch.relu(x)
+        x = self.conv2(x, edge_index)
+        return x
     
 class MLP(nn.Module):
     def __init__(self, in_channels_cls, in_channels_mean, out_channels):
@@ -67,15 +92,21 @@ class MLP(nn.Module):
         self.cls_fc = nn.Sequential(
             nn.Linear(in_channels_cls, 128),
             nn.ReLU(),
+            nn.Linear(128, 128), 
+            nn.ReLU(),
             nn.Linear(128, 64)
         )
         self.mean_fc = nn.Sequential(
             nn.Linear(in_channels_mean, 128),
             nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
             nn.Linear(128, 64)
         )
         self.final_fc = nn.Sequential(
             nn.Linear(64 + 64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
             nn.ReLU(),
             nn.Linear(32, out_channels)
         )
@@ -91,36 +122,62 @@ class twoTrackNetwork(nn.Module):
 
     def __init__(self, in_channels, out_channels, in_channels_cls, in_channels_mean):
         super(twoTrackNetwork, self).__init__()
+
+        hidden_dim = 128
         self.gat = GAT(in_channels, out_channels)
         self.deep_gat = DeepGAT(in_channels, out_channels)
-        self.mpnn = MPNN(in_channels, out_channels)
+        self.gin = GIN(in_channels, hidden_dim=hidden_dim, out_dim=out_channels)
         self.mlp = MLP(in_channels_cls, in_channels_mean, out_channels)
+        self.mfnet = MFNet(in_channels, out_channels)
 
-        self.agg1 = nn.Linear(out_channels * 4, out_channels)
-        self.agg2 = nn.Linear(out_channels, 1)
+        # Attentional aggregator across branches
+        self.branch_attention = AttentionalAggregation(
+            gate_nn = nn.Sequential(
+                nn.Linear(out_channels, out_channels),
+                nn.ReLU(),
+                nn.Linear(out_channels, 1)
+            ),
+            nn = nn.Identity()  # no additional transformation on input branches
+        )
+
+        self.final_mlp = nn.Sequential(
+            nn.Linear(out_channels, out_channels),
+            nn.ReLU(),
+            nn.Linear(out_channels, 1)
+        )
 
     def forward(self, graph_data, cls_embed, mean_embed):
         # Graph data
         x, edge_index, batch = graph_data.x, graph_data.edge_index, graph_data.batch
+
+        mfnet_out = self.mfnet(x, edge_index)
         gat_out = self.gat(x, edge_index)
         deep_gat_out = self.deep_gat(x, edge_index)
-        mpnn_out = self.mpnn(x, edge_index)
+        gin_out = self.gin(x, edge_index)
 
-        # graph level data pooled
-        gat_out_pooled = global_mean_pool(gat_out, batch)
-        deep_gat_out_pooled = global_mean_pool(deep_gat_out, batch)
-        mpnn_out_pooled = global_mean_pool(mpnn_out, batch)
+        # Pooling
+        mfnet_pooled = global_mean_pool(mfnet_out, batch)
+        gat_pooled = global_mean_pool(gat_out, batch)
+        deep_gat_pooled = global_mean_pool(deep_gat_out, batch)
+        gin_pooled = global_mean_pool(gin_out, batch)
 
-        # Embedding data
         embedding_out = self.mlp(cls_embed, mean_embed)
 
-        # Concatenate all outputs
-        out = torch.cat((gat_out_pooled, deep_gat_out_pooled, mpnn_out_pooled, embedding_out), dim=1)
-        
-        # Final MLP
-        out = torch.relu(self.agg1(out))
-        out = self.agg2(out)
-        
+        # Stack branch outputs shape [batch_size, num_branches, out_channels] for attention
+        stacked = torch.stack([
+            mfnet_pooled,
+            gat_pooled,
+            deep_gat_pooled,
+            gin_pooled,
+            embedding_out
+        ], dim=1)
+
+        # AttentionalAggregation
+        out = self.branch_attention(stacked)
+
+        # Final prediction head
+        out = self.final_mlp(out)
+
         return out
     
 if __name__ == "__main__":

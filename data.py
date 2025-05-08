@@ -20,23 +20,40 @@ class ESOLDataset(Dataset):
 
         edge_index = []
         node_features = []
+        edge_features = []
+
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+
+            bond_type = bond.GetBondTypeAsDouble()  # 1.0, 2.0, 3.0, 1.5 (aromatic)
+            is_conjugated = bond.GetIsConjugated()
+            is_in_ring = bond.IsInRing()
+
+            edge_feat = [bond_type, float(is_conjugated), float(is_in_ring)]
+
+            # Add both directions
+            edge_index.append((i, j))
+            edge_index.append((j, i))
+            edge_features.append(edge_feat)
+            edge_features.append(edge_feat)
 
         # one hot encoding of atom types
         for atom in mol.GetAtoms():
             atom_type = atom.GetAtomicNum()
-            node_features.append([atom_type])  
+            aromatic = atom.GetIsAromatic()
+            formal_charge = atom.GetFormalCharge()
+            hybridization = int(atom.GetHybridization())
+            degree = atom.GetDegree()
+            valence = atom.GetExplicitValence()
 
-        # Build edge index
-        for bond in mol.GetBonds():
-            i = bond.GetBeginAtomIdx()
-            j = bond.GetEndAtomIdx()
-            edge_index.append((i, j))
-            edge_index.append((j, i))  # undirected
+            node_features.append([atom_type, aromatic, formal_charge, hybridization, degree, valence])  
 
         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_features, dtype=torch.float)
         x = torch.tensor(node_features, dtype=torch.float)
 
-        return Data(x=x, edge_index=edge_index)
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
