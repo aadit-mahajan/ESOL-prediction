@@ -77,9 +77,9 @@ def evaluate_regression(y_true, y_pred):
     print(f"MAE: {mae:.4f}")
     print(f"R²: {r2:.4f}")
     print(f"Pearson r: {pearson_r:.4f}")
-    print(f"Spearman ρ: {spearman_r:.4f}")
+    print(f"Spearman rho: {spearman_r:.4f}")
 
-    return f"RMSE: {rmse:.4f}\nMAE: {mae:.4f}\nR²: {r2:.4f}\nPearson r: {pearson_r:.4f}\nSpearman ρ: {spearman_r:.4f}"
+    return f"RMSE: {rmse:.4f}\nMAE: {mae:.4f}\nR²: {r2:.4f}\nPearson r: {pearson_r:.4f}\nSpearman rho: {spearman_r:.4f}"
 
 def make_plots(y_true, y_pred, run_name):
     plt.figure(figsize=(8, 6))
@@ -125,13 +125,13 @@ def main():
     
     # dataset used:
 
-    df = esol
-    dataset = dataset1
-    run_name = "esol"
+    # df = esol
+    # dataset = dataset1
+    # run_name = "esol"
 
-    # df = aqsoldb
-    # dataset = dataset2
-    # run_name = "aqsoldb"
+    df = aqsoldb
+    dataset = dataset2
+    run_name = "aqsoldb"
 
     # split the dataset
     train, test, val = random_split(
@@ -163,12 +163,12 @@ def main():
             out_channels=out_channels
         )
 
-        optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
+        optimizer = torch.optim.Adam(model.parameters(), lr = 1e-4)
         criterion = torch.nn.MSELoss()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model.to(device)
 
-        epochs = 40
+        epochs = 30
         history = []
         for epoch in range(epochs):
             train_loss = iterate(model, trainLoader, optimizer, criterion, device)
@@ -178,7 +178,7 @@ def main():
                 'train_loss': train_loss,
                 'val_loss': val_loss
             }
-            print(f'epoch: {epoch}\ntrain loss: {losses['train_loss']}, val loss: {losses['val_loss']}\n')
+            print(f'epoch: {epoch}\ntrain loss: {losses['train_loss'] :.3f}, val loss: {losses['val_loss'] :.3f}\n')
             history.append(losses)
 
         print("Training Complete")
@@ -199,7 +199,6 @@ def main():
 
     # test the model on the test data:
 
-    optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
     criterion = torch.nn.MSELoss()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

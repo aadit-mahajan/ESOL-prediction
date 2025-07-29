@@ -6,13 +6,21 @@ class GAT(nn.Module):
     # captures connectivity importances
     def __init__(self, in_channels, out_channels):
         super(GAT, self).__init__()
-        self.conv1 = GATConv(in_channels, 32)
-        self.conv2 = GATConv(32, out_channels)
+        self.conv1 = GATConv(in_channels, 64)
+        self.conv2 = GATConv(64, 64)
+        self.conv3 = GATConv(64, out_channels)
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
         x = torch.relu(x)
+        x = nn.Dropout(0.1)(x)  # Dropout for regularization
+        x = nn.BatchNorm1d(64)(x)  # Batch normalization
         x = self.conv2(x, edge_index)
+        x = torch.relu(x)
+        x = nn.Dropout(0.1)(x)  # Dropout for regularization
+        x = nn.BatchNorm1d(64)(x)  # Batch normalization
+        x = self.conv3(x, edge_index)
+        x = torch.relu(x)
         return x
 
 class DeepGAT(nn.Module):
@@ -68,8 +76,11 @@ class GIN(nn.Module):
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
         x = torch.relu(x)
+        x = nn.Dropout(0.1)(x)  # Dropout for regularization
         x = self.conv2(x, edge_index)
+        
         x = torch.relu(x)
+        x = nn.Dropout(0.1)(x)  # Dropout for regularization
         x = self.out_lin(x)
         return x
 
@@ -77,12 +88,13 @@ class MFNet(nn.Module):
     # captures connectivity importances
     def __init__(self, in_channels, out_channels):
         super(MFNet, self).__init__()
-        self.conv1 = MFConv(in_channels, 32)
-        self.conv2 = MFConv(32, out_channels)
+        self.conv1 = MFConv(in_channels, 64)
+        self.conv2 = MFConv(64, out_channels)
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
         x = torch.relu(x)
+        x = nn.Dropout(0.1)(x) 
         x = self.conv2(x, edge_index)
         return x
     
@@ -90,30 +102,67 @@ class MLP(nn.Module):
     def __init__(self, in_channels_cls, in_channels_mean, out_channels):
         super(MLP, self).__init__()
         self.cls_fc = nn.Sequential(
-            nn.Linear(in_channels_cls, 128),
+            nn.Conv1d(in_channels_cls, 256, kernel_size = 5, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Linear(128, 128), 
+            nn.Dropout(0.5),
+
+            nn.Conv1d(256, 256, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Linear(128, 64)
+            nn.Dropout(0.5),
+
+            nn.Conv1d(256, 128, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(128, 64, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
         )
+
         self.mean_fc = nn.Sequential(
-            nn.Linear(in_channels_mean, 128),
+            nn.Conv1d(in_channels_mean, 256, kernel_size = 5, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Linear(128, 128),
+
+            nn.Conv1d(256, 256, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Linear(128, 64)
+            nn.Dropout(0.5),
+
+            nn.Conv1d(256, 128, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(128, 64, kernel_size = 3, padding=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
         )
         self.final_fc = nn.Sequential(
             nn.Linear(64 + 64, 32),
             nn.ReLU(),
+            nn.Dropout(0.1),
             nn.Linear(32, 32),
             nn.ReLU(),
+            nn.Dropout(0.1),
             nn.Linear(32, out_channels)
         )
 
     def forward(self, cls_input, mean_input):
-        cls_out = self.cls_fc(cls_input)
+        if cls_input.dim() == 2:
+            cls_input = cls_input.unsqueeze(2)  # [B, 600, 1]
+        if mean_input.dim() == 2:
+            mean_input = mean_input.unsqueeze(2)  # [B, 600, 1]
+
+        cls_out = self.cls_fc(cls_input)  # Now Conv1D works
+        cls_out = cls_out.mean(dim=2)     # Global avg pooling -> [B, 64]
+
         mean_out = self.mean_fc(mean_input)
+        mean_out = mean_out.mean(dim=2)   # [B, 64]
+
         combined = torch.cat([cls_out, mean_out], dim=1)
         out = self.final_fc(combined)
         return out
@@ -125,7 +174,6 @@ class twoTrackNetwork(nn.Module):
 
         hidden_dim = 128
         self.gat = GAT(in_channels, out_channels)
-        self.deep_gat = DeepGAT(in_channels, out_channels)
         self.gin = GIN(in_channels, hidden_dim=hidden_dim, out_dim=out_channels)
         self.mlp = MLP(in_channels_cls, in_channels_mean, out_channels)
         self.mfnet = MFNet(in_channels, out_channels)
@@ -152,13 +200,11 @@ class twoTrackNetwork(nn.Module):
 
         mfnet_out = self.mfnet(x, edge_index)
         gat_out = self.gat(x, edge_index)
-        deep_gat_out = self.deep_gat(x, edge_index)
         gin_out = self.gin(x, edge_index)
 
         # Pooling
         mfnet_pooled = global_mean_pool(mfnet_out, batch)
         gat_pooled = global_mean_pool(gat_out, batch)
-        deep_gat_pooled = global_mean_pool(deep_gat_out, batch)
         gin_pooled = global_mean_pool(gin_out, batch)
 
         embedding_out = self.mlp(cls_embed, mean_embed)
@@ -167,7 +213,6 @@ class twoTrackNetwork(nn.Module):
         stacked = torch.stack([
             mfnet_pooled,
             gat_pooled,
-            deep_gat_pooled,
             gin_pooled,
             embedding_out
         ], dim=1)
